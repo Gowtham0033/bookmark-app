@@ -9,6 +9,9 @@ export default function BookmarksClient() {
   const [url, setUrl] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editUrl, setEditUrl] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -35,7 +38,7 @@ export default function BookmarksClient() {
 
     // Subscribe to realtime updates
     const subscription = supabase
-      .channel('bookmarks-channel')
+      .channel('bookmarks-realtime')
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
@@ -45,7 +48,11 @@ export default function BookmarksClient() {
         console.log('Realtime update:', payload)
         if (mounted) {
           if (payload.eventType === 'INSERT') {
-            setBookmarks(prev => [payload.new, ...prev])
+            // Only add if not already in state (avoid duplicates)
+            setBookmarks(prev => {
+              const exists = prev.some(b => b.id === payload.new.id)
+              return exists ? prev : [payload.new, ...prev]
+            })
           } else if (payload.eventType === 'DELETE') {
             setBookmarks(prev => prev.filter(b => b.id !== payload.old.id))
           } else if (payload.eventType === 'UPDATE') {
@@ -115,6 +122,53 @@ export default function BookmarksClient() {
     }
   }
 
+  const startEdit = (bookmark) => {
+    setEditingId(bookmark.id)
+    setEditTitle(bookmark.title)
+    setEditUrl(bookmark.url)
+    setError(null)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditTitle('')
+    setEditUrl('')
+  }
+
+  const saveEdit = async () => {
+    setError(null)
+    if (!editTitle || !editUrl) {
+      setError('Title and URL are required')
+      return
+    }
+
+    try {
+      const { error: updateError } = await supabase
+        .from('bookmarks')
+        .update({ title: editTitle, url: editUrl })
+        .eq('id', editingId)
+
+      if (updateError) {
+        console.error('Update error:', updateError)
+        setError(updateError.message)
+      } else {
+        console.log('Bookmark updated:', editingId)
+        // Update in state
+        setBookmarks(prev =>
+          prev.map(b =>
+            b.id === editingId ? { ...b, title: editTitle, url: editUrl } : b
+          )
+        )
+        setEditingId(null)
+        setEditTitle('')
+        setEditUrl('')
+      }
+    } catch (err) {
+      console.error('Edit bookmark error:', err)
+      setError(err.message || 'Failed to update bookmark')
+    }
+  }
+
   if (!session) return (
     <div className="card text-center py-12">
       <div className="text-4xl mb-4">🔐</div>
@@ -181,28 +235,73 @@ export default function BookmarksClient() {
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-gray-600 mb-4">{bookmarks.length} bookmark{bookmarks.length !== 1 ? 's' : ''}</h3>
             {bookmarks.map(b => (
-              <div key={b.id} className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-100 hover:shadow-md transition-shadow">
-                <div className="flex-1 min-w-0">
-                  <a 
-                    className="text-blue-600 font-semibold hover:underline truncate block" 
-                    href={b.url} 
-                    target="_blank" 
-                    rel="noreferrer"
-                  >
-                    {b.title || b.url}
-                  </a>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {new Date(b.inserted_at).toLocaleDateString()} at {new Date(b.inserted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              editingId === b.id ? (
+                <div key={b.id} className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-200 space-y-3">
+                  <h3 className="font-semibold text-gray-900">Edit Bookmark</h3>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Title</label>
+                    <input 
+                      className="input-field"
+                      value={editTitle} 
+                      onChange={(e) => setEditTitle(e.target.value)} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">URL</label>
+                    <input 
+                      className="input-field"
+                      value={editUrl} 
+                      onChange={(e) => setEditUrl(e.target.value)} 
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={saveEdit}
+                      className="flex-1 btn-primary"
+                    >
+                      ✅ Save
+                    </button>
+                    <button 
+                      onClick={cancelEdit}
+                      className="flex-1 btn-outline"
+                    >
+                      ❌ Cancel
+                    </button>
                   </div>
                 </div>
-                <button 
-                  type="button"
-                  onClick={() => deleteBookmark(b.id)} 
-                  className="btn-danger ml-3 whitespace-nowrap"
-                >
-                  🗑️ Delete
-                </button>
-              </div>
+              ) : (
+                <div key={b.id} className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-100 hover:shadow-md transition-shadow">
+                  <div className="flex-1 min-w-0">
+                    <a 
+                      className="text-blue-600 font-semibold hover:underline truncate block" 
+                      href={b.url} 
+                      target="_blank" 
+                      rel="noreferrer"
+                    >
+                      {b.title || b.url}
+                    </a>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {new Date(b.inserted_at).toLocaleDateString()} at {new Date(b.inserted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 ml-3">
+                    <button 
+                      type="button"
+                      onClick={() => startEdit(b)} 
+                      className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 transition-colors whitespace-nowrap"
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => deleteBookmark(b.id)} 
+                      className="btn-danger whitespace-nowrap"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
+                </div>
+              )
             ))}
           </div>
         )}

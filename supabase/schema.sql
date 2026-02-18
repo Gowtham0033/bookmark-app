@@ -29,6 +29,3 @@ for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users can delete their bookmarks" on bookmarks
 for delete using (auth.uid() = user_id);
 
--- Note: Run this SQL in the Supabase SQL editor. Also enable
--- Google under Auth > Providers and configure the redirect URL
--- (https://your-vercel-domain.vercel.app or http://localhost:3000).
